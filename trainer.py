@@ -8,6 +8,7 @@ import numpy as np
 from model import *
 from tqdm import *
 from dataset import *
+import argparse
 
 __all__ = ['loss_fn', 'Trainer']
 
@@ -22,7 +23,7 @@ def loss_fn(original_seq,recon_seq,f_mean,f_logvar,z_post_mean,z_post_logvar, z_
     are given by the LSTM
     """
     batch_size = original_seq.size(0)
-    mse = F.mse_loss(recon_seq,original_seq,reduction='sum');
+    mse = F.mse_loss(recon_seq,original_seq,reduction='sum')
     kld_f = -0.5 * torch.sum(1 + f_logvar - torch.pow(f_mean,2) - torch.exp(f_logvar))
     z_post_var = torch.exp(z_post_logvar)
     z_prior_var = torch.exp(z_prior_logvar)
@@ -31,7 +32,7 @@ def loss_fn(original_seq,recon_seq,f_mean,f_logvar,z_post_mean,z_post_logvar, z_
 
 
 class Trainer(object):
-    def __init__(self,model,train,test,trainloader,testloader, test_f_expand,
+    def __init__(self,model,train,test,trainloader,testloader,test_f_expand,
                  epochs=100,batch_size=64,learning_rate=0.001,nsamples=1,sample_path='./sample',
                  recon_path='./recon/', transfer_path = './transfer/', 
                  checkpoints='model.pth', style1='image1.sprite', style2='image2.sprite', device=torch.device('cuda:0')):
@@ -43,8 +44,7 @@ class Trainer(object):
         self.epochs = epochs
         self.device = device
         self.batch_size = batch_size
-        self.model = model
-        self.model.to(device)
+        self.model = model.to(device)
         self.learning_rate = learning_rate
         self.checkpoints = checkpoints
         self.optimizer = optim.Adam(self.model.parameters(),self.learning_rate)
@@ -61,6 +61,9 @@ class Trainer(object):
         self.image2 = self.image2.to(device)
         self.image1 = torch.unsqueeze(self.image1,0)
         self.image2= torch.unsqueeze(self.image2,0)
+        for path in [sample_path, recon_path, transfer_path]:
+            if not os.path.exists(path):
+                os.makedirs(path)
     
     def save_checkpoint(self,epoch):
         torch.save({
@@ -126,48 +129,64 @@ class Trainer(object):
             torchvision.utils.save_image(image2_body_image1_motion,'%s/epoch%d/image2_body_image1_motion.png' % (self.transfer_path,epoch))
 
     def train_model(self):
-       self.model.train()
-       for epoch in range(self.start_epoch,self.epochs):
-           losses = []
-           kld_fs = []
-           kld_zs = []
-           print("Running Epoch : {}".format(epoch+1))
-           for i,dataitem in tqdm(enumerate(self.trainloader,1)):
-               _,_,_,_,_,_,data = dataitem
-               data = data.to(self.device)
-               self.optimizer.zero_grad()
-               f_mean, f_logvar, f, z_post_mean, z_post_logvar, z, z_prior_mean, z_prior_logvar, recon_x = self.model(data)
-               loss, kld_f, kld_z = loss_fn(data, recon_x, f_mean, f_logvar, z_post_mean, z_post_logvar, z_prior_mean, z_prior_logvar)
-               loss.backward()
-               self.optimizer.step()
-               losses.append(loss.item())
-               kld_fs.append(kld_f.item())
-               kld_zs.append(kld_z.item())
-           meanloss = np.mean(losses)
-           meanf = np.mean(kld_fs)
-           meanz = np.mean(kld_zs)
-           self.epoch_losses.append(meanloss)
-           print("Epoch {} : Average Loss: {} KL of f : {} KL of z : {}".format(epoch+1,meanloss, meanf, meanz))
-           self.save_checkpoint(epoch)
-           self.model.eval()
-           self.sample_frames(epoch+1)
-           _,_,_,_,_,_,sample = self.test[int(torch.randint(0,len(self.test),(1,)).item())]
-           sample = torch.unsqueeze(sample,0)
-           sample = sample.to(self.device)
-           self.sample_frames(epoch+1)
-           self.recon_frame(epoch+1,sample)
-           self.style_transfer(epoch+1)
-           self.model.train()
-       print("Training is complete")
+        self.model.train()
+        for epoch in range(self.start_epoch,self.epochs):
+            losses = []
+            kld_fs = []
+            kld_zs = []
+            print("Running Epoch : {}".format(epoch+1))
+            for i,dataitem in tqdm(enumerate(self.trainloader,1)):
+                # _,_,_,_,_,_,data = dataitem
+                data = dataitem['images']
+                data = data.to(self.device)
+                self.optimizer.zero_grad()
+                f_mean, f_logvar, f, z_post_mean, z_post_logvar, z, z_prior_mean, z_prior_logvar, recon_x = self.model(data)
+                loss, kld_f, kld_z = loss_fn(data, recon_x, f_mean, f_logvar, z_post_mean, z_post_logvar, z_prior_mean, z_prior_logvar)
+                loss.backward()
+                self.optimizer.step()
+                losses.append(loss.item())
+                kld_fs.append(kld_f.item())
+                kld_zs.append(kld_z.item())
+            meanloss = np.mean(losses)
+            meanf = np.mean(kld_fs)
+            meanz = np.mean(kld_zs)
+            self.epoch_losses.append(meanloss)
+            print("Epoch {} : Average Loss: {} KL of f : {} KL of z : {}".format(epoch+1,meanloss, meanf, meanz))
+            self.save_checkpoint(epoch)
+            self.model.eval()
+            self.sample_frames(epoch+1)
+            # _,_,_,_,_,_,sample = self.test[int(torch.randint(0,len(self.test),(1,)).item())]
+            
+            sample = torch.unsqueeze(sample,0)
+            sample = sample.to(self.device)
+            self.sample_frames(epoch+1)
+            self.recon_frame(epoch+1,sample)
+            self.style_transfer(epoch+1)
+            self.model.train()
+        print("Training is complete")
 
-sprite = Sprites('./dataset/lpc-dataset/train', 6767)
-sprite_test = Sprites('./dataset/lpc-dataset/test', 791)
-batch_size = 25
-loader = torch.utils.data.DataLoader(sprite, batch_size=batch_size, shuffle=True, num_workers=4)
-device = torch.device('cuda:1')
-vae = DisentangledVAE(f_dim=256, z_dim=32, step=256, factorised=True,device=device)
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--name', type=str, default='test_run')
+parser.add_argument('--dataset', type=str, default='dsprites')
+parser.add_argument('--data_root', type=str, default='../nec-video-generation/mocogan-pl/data/dsprites')
+parser.add_argument('--batch_size', type=int, default=25)
+parser.add_argument('--image_size', type=int, default=64)
+args = parser.parse_args()
+# sprite = Sprites('./dataset/lpc-dataset/train', 6767)
+# sprite_test = Sprites('./dataset/lpc-dataset/test', 791)
+from sprite import get_video_dataloader
+sprite, loader_train = get_video_dataloader(os.path.join(args.data_root, 'train'), args)
+sprite_test, loader_test = get_video_dataloader(os.path.join(args.data_root, 'test'), args)
+batch_size = args.batch_size
+# loader = torch.utils.data.DataLoader(sprite, batch_size=batch_size, shuffle=True, num_workers=4)
+if torch.cuda.is_available():
+    device = torch.device('cuda')
+else:
+    device = torch.device('cpu')
+vae = DisentangledVAE(f_dim=256, z_dim=32, step=256, factorised=True, device=device)
 test_f = torch.rand(1,256, device=device)
 test_f = test_f.unsqueeze(1).expand(1, 8, 256)
-trainer = Trainer(vae, sprite, sprite_test, loader ,None, test_f,batch_size=25, epochs=500, learning_rate=0.0002, device=device)
+trainer = Trainer(vae, sprite, sprite_test, loader_train, loader_test, test_f, batch_size=batch_size, epochs=500, learning_rate=0.0002, device=device)
 trainer.load_checkpoint()
 trainer.train_model()
