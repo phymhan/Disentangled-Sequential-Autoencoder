@@ -9,8 +9,13 @@ from model import *
 from tqdm import *
 from dataset.sprite import Sprites
 import argparse
+import shutil
+import random
 
 __all__ = ['loss_fn', 'Trainer']
+random.seed(0)
+np.random.seed(0)
+normalize = lambda x: (x + 1)/2
 
 
 def loss_fn(original_seq,recon_seq,f_mean,f_logvar,z_post_mean,z_post_logvar, z_prior_mean, z_prior_logvar):
@@ -54,7 +59,8 @@ class Trainer(object):
         self.transfer_path = transfer_path
         self.test_f_expand = test_f_expand
         self.epoch_losses = []
-
+        if not os.path.exists(self.transfer_path + 'image1.sprite'):
+            self.copy_transfer_sprites()
         self.image1 = torch.load(self.transfer_path + 'image1.sprite')['sprite']
         self.image2 = torch.load(self.transfer_path + 'image2.sprite')['sprite']
         self.image1 = self.image1.to(device)
@@ -64,6 +70,11 @@ class Trainer(object):
         for path in [sample_path, recon_path, transfer_path]:
             if not os.path.exists(path):
                 os.makedirs(path)
+    
+    def copy_transfer_sprites(self):
+        images = np.random.choice(self.test.filelist, 2)
+        shutil.copyfile(images[0], os.path.join(self.transfer_path, 'image1.sprite'))
+        shutil.copyfile(images[1], os.path.join(self.transfer_path, 'image2.sprite'))
     
     def save_checkpoint(self,epoch):
         torch.save({
@@ -94,6 +105,7 @@ class Trainer(object):
             test_zf = torch.cat((test_z, self.test_f_expand), dim=2)
             recon_x = self.model.decode_frames(test_zf) 
             recon_x = recon_x.view(self.samples*8,3,64,64)
+            recon_x = normalize(recon_x)
             torchvision.utils.save_image(recon_x,'%s/epoch%d.png' % (self.sample_path,epoch))
     
     def recon_frame(self,epoch,original):
@@ -101,6 +113,7 @@ class Trainer(object):
             _,_,_,_,_,_,_,_,recon = self.model(original) 
             image = torch.cat((original,recon),dim=0)
             image = image.view(2*8,3,64,64)
+            image = normalize(image)
             os.makedirs(os.path.dirname('%s/epoch%d.png' % (self.recon_path,epoch)),exist_ok=True)
             torchvision.utils.save_image(image,'%s/epoch%d.png' % (self.recon_path,epoch))
 
@@ -122,11 +135,16 @@ class Trainer(object):
             image2_body_image1_motion = torch.squeeze(image2_body_image1_motion,0)
             image1 = torch.squeeze(self.image1, 0)
             image2 = torch.squeeze(self.image2, 0)
+            image1 = normalize(image1)
+            image2 = normalize(image2)
+            image1_body_image2_motion = normalize(image1_body_image2_motion)
+            image2_body_image1_motion = normalize(image2_body_image1_motion)
             os.makedirs(os.path.dirname('%s/epoch%d/image1_body_image2_motion.png' % (self.transfer_path,epoch)),exist_ok=True)
             torchvision.utils.save_image(image1,'%s/epoch%d/image1.png' % (self.transfer_path,epoch))
             torchvision.utils.save_image(image2,'%s/epoch%d/image2.png' % (self.transfer_path,epoch))
             torchvision.utils.save_image(image1_body_image2_motion,'%s/epoch%d/image1_body_image2_motion.png' % (self.transfer_path,epoch))
             torchvision.utils.save_image(image2_body_image1_motion,'%s/epoch%d/image2_body_image1_motion.png' % (self.transfer_path,epoch))
+        self.copy_transfer_sprites()
 
     def train_model(self):
         self.model.train()
