@@ -7,7 +7,7 @@ import torch.optim as optim
 import numpy as np
 from model import *
 from tqdm import *
-from dataset import *
+from dataset.sprite import Sprites
 import argparse
 
 __all__ = ['loss_fn', 'Trainer']
@@ -135,9 +135,9 @@ class Trainer(object):
             kld_fs = []
             kld_zs = []
             print("Running Epoch : {}".format(epoch+1))
-            for i,dataitem in tqdm(enumerate(self.trainloader,1)):
-                # _,_,_,_,_,_,data = dataitem
-                data = dataitem['images']
+            for i, dataitem in tqdm(enumerate(self.trainloader,1)):
+                _,_,_,_,_,_,data = dataitem
+                # data = dataitem['images']
                 data = data.to(self.device)
                 self.optimizer.zero_grad()
                 f_mean, f_logvar, f, z_post_mean, z_post_logvar, z, z_prior_mean, z_prior_logvar, recon_x = self.model(data)
@@ -155,8 +155,7 @@ class Trainer(object):
             self.save_checkpoint(epoch)
             self.model.eval()
             self.sample_frames(epoch+1)
-            # _,_,_,_,_,_,sample = self.test[int(torch.randint(0,len(self.test),(1,)).item())]
-            
+            _,_,_,_,_,_,sample = self.test[int(torch.randint(0,len(self.test),(1,)).item())]
             sample = torch.unsqueeze(sample,0)
             sample = sample.to(self.device)
             self.sample_frames(epoch+1)
@@ -169,24 +168,17 @@ class Trainer(object):
 parser = argparse.ArgumentParser()
 parser.add_argument('--name', type=str, default='test_run')
 parser.add_argument('--dataset', type=str, default='dsprites')
-parser.add_argument('--data_root', type=str, default='../nec-video-generation/mocogan-pl/data/dsprites')
+parser.add_argument('--data_root', type=str, default='./dataset/lpc-dataset')
 parser.add_argument('--batch_size', type=int, default=25)
 parser.add_argument('--image_size', type=int, default=64)
 args = parser.parse_args()
-# sprite = Sprites('./dataset/lpc-dataset/train', 6767)
-# sprite_test = Sprites('./dataset/lpc-dataset/test', 791)
-from sprite import get_video_dataloader
-sprite, loader_train = get_video_dataloader(os.path.join(args.data_root, 'train'), args)
-sprite_test, loader_test = get_video_dataloader(os.path.join(args.data_root, 'test'), args)
-batch_size = args.batch_size
-# loader = torch.utils.data.DataLoader(sprite, batch_size=batch_size, shuffle=True, num_workers=4)
-if torch.cuda.is_available():
-    device = torch.device('cuda')
-else:
-    device = torch.device('cpu')
+sprite = Sprites(os.path.join(args.data_root, 'train'), 6767)
+sprite_test = Sprites(os.path.join(args.data_root, 'test'), 791)
+loader_train = torch.utils.data.DataLoader(sprite, batch_size=args.batch_size, shuffle=True, num_workers=4)
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 vae = DisentangledVAE(f_dim=256, z_dim=32, step=256, factorised=True, device=device)
 test_f = torch.rand(1,256, device=device)
 test_f = test_f.unsqueeze(1).expand(1, 8, 256)
-trainer = Trainer(vae, sprite, sprite_test, loader_train, loader_test, test_f, batch_size=batch_size, epochs=500, learning_rate=0.0002, device=device)
+trainer = Trainer(vae, sprite, sprite_test, loader_train, None, test_f, batch_size=args.batch_size, epochs=500, learning_rate=0.0002, device=device)
 trainer.load_checkpoint()
 trainer.train_model()

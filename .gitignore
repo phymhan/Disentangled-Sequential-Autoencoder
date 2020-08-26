@@ -1,4 +1,7 @@
 *.model
 dataset/*.png
 dataset/lpc-dataset
+dataset/lpc-canvas
+*.zip
+*/*.zip
 *.log
